@@ -7,7 +7,6 @@ import {
   Eye,
   Sunrise,
   Sunset,
-  CloudSun,
   Sun,
   Shirt,
   ShieldAlert,
@@ -23,14 +22,190 @@ import {
   Clock,
   Map,
   Thermometer,
+  Activity,
+  Star,
+  Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import "./App.css";
+
+function formatClock(timestamp) {
+  return new Date(timestamp * 1000).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function tsToMinutes(timestamp) {
+  const date = new Date(timestamp * 1000);
+  return date.getHours() * 60 + date.getMinutes();
+}
 
 function App() {
   const [weatherType, setWeatherType] = useState("sunny");
   const [forecastMode, setForecastMode] = useState("days");
   const [mapMode, setMapMode] = useState("map");
+  const [atmosphereOverride, setAtmosphereOverride] = useState("auto");
+
+  const [weather, setWeather] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [cityInput, setCityInput] = useState("");
+  const [favorites, setFavorites] = useState([]);
+
+  const loadWeather = async (params) => {
+    const query = new URLSearchParams(params).toString();
+    const response = await fetch(`/api/weather?${query}`);
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || "Failed to load weather");
+    }
+
+    return response.json();
+  };
+
+  const fetchWeather = async (params) => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const data = await loadWeather(params);
+      setWeather(data);
+      setWeatherType(data.current.type);
+      setAtmosphereOverride("auto");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    loadWeather({ q: "Hyderabad" })
+      .then((data) => {
+        if (cancelled) return;
+
+        setWeather(data);
+        setWeatherType(data.current.type);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const runSearch = () => {
+    const city = cityInput.trim();
+    if (!city) {
+      setError("Enter a city name to search");
+      return;
+    }
+
+    fetchWeather({ q: city });
+  };
+
+  const handleSearchKeyDown = (event) => {
+    if (event.key !== "Enter") return;
+
+    runSearch();
+  };
+
+  const handleMyLocation = () => {
+    if (!navigator.geolocation) {
+      setError("Geolocation is not supported by this browser");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        fetchWeather({
+          lat: position.coords.latitude,
+          lon: position.coords.longitude,
+        });
+      },
+      () => {
+        setLoading(false);
+        setError("Location access was denied");
+      }
+    );
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/favorites")
+      .then((response) => {
+        if (!response.ok) throw new Error("Failed to load favorites");
+        return response.json();
+      })
+      .then((data) => {
+        if (!cancelled) setFavorites(data.favorites || []);
+      })
+      .catch(() => {
+        if (!cancelled) setFavorites([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const saveCurrent = async () => {
+    if (!hasLive || currentSaved) return;
+
+    try {
+      const response = await fetch("/api/favorites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: weather.city.name,
+          country: weather.city.country || "",
+          lat: weather.city.lat,
+          lon: weather.city.lon,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.error || "Failed to save favorite");
+        return;
+      }
+
+      setFavorites((prev) =>
+        prev.some((f) => f._id === data.favorite._id)
+          ? prev
+          : [data.favorite, ...prev]
+      );
+    } catch {
+      setError("Failed to save favorite");
+    }
+  };
+
+  const removeFavorite = async (id) => {
+    try {
+      await fetch(`/api/favorites/${id}`, { method: "DELETE" });
+      setFavorites((prev) => prev.filter((f) => f._id !== id));
+    } catch {
+      setError("Failed to remove favorite");
+    }
+  };
+
+  const openFavorite = (favorite) => {
+    fetchWeather({ lat: favorite.lat, lon: favorite.lon });
+  };
 
   const weatherData = {
     sunny: {
@@ -77,7 +252,145 @@ function App() {
     },
   };
 
-  const currentWeather = weatherData[weatherType];
+  const overrideActive = atmosphereOverride !== "auto";
+  const displayType = overrideActive ? atmosphereOverride : weatherType;
+
+  const currentWeather = weatherData[displayType];
+
+  const hasLive = Boolean(weather);
+
+  const displayCondition =
+    hasLive && !overrideActive
+      ? weather.current.condition
+      : currentWeather.condition;
+  const displaySummary =
+    hasLive && !overrideActive
+      ? weather.current.description
+      : currentWeather.summary;
+  const displayBadge =
+    hasLive && !overrideActive
+      ? weather.current.condition.toUpperCase()
+      : currentWeather.badge;
+  const displayIcon = currentWeather.icon;
+
+  const displayTemp = hasLive
+    ? `${Math.round(weather.current.temp)}°`
+    : "29°";
+  const displayFeels = hasLive
+    ? `${Math.round(weather.current.feelsLike)}°`
+    : "31°";
+  const displayHumidity = hasLive
+    ? `${Math.round(weather.current.humidity)}%`
+    : "65%";
+  const displayWind = hasLive
+    ? `${Math.round(weather.current.windSpeed)} km/h`
+    : "12 km/h";
+  const displayPressure = hasLive
+    ? `${Math.round(weather.current.pressure)} hPa`
+    : "1012 hPa";
+  const displayVisibility = hasLive
+    ? `${(weather.current.visibility / 1000).toFixed(1)} km`
+    : "10 km";
+
+  const displayCity = hasLive ? weather.city.name : "Hyderabad";
+  const currentSaved =
+    hasLive &&
+    favorites.some(
+      (f) =>
+        Math.abs(f.lat - weather.city.lat) < 0.01 &&
+        Math.abs(f.lon - weather.city.lon) < 0.01
+    );
+  const displayRegion = hasLive ? weather.city.country : "Telangana, India";
+
+  const mapLat = hasLive ? weather.city.lat : 17.385;
+  const mapLon = hasLive ? weather.city.lon : 78.4867;
+  const MAP_SPAN = 0.6;
+  const mapEmbedSrc =
+    "https://www.openstreetmap.org/export/embed.html?bbox=" +
+    `${mapLon - MAP_SPAN}%2C${mapLat - MAP_SPAN}%2C${mapLon + MAP_SPAN}%2C${mapLat + MAP_SPAN}` +
+    `&layer=mapnik&marker=${mapLat}%2C${mapLon}`;
+
+  const airComponentMeta = [
+    { name: "PM2.5", key: "pm2_5", unit: "µg/m³" },
+    { name: "PM10", key: "pm10", unit: "µg/m³" },
+    { name: "O3", key: "o3", unit: "µg/m³" },
+    { name: "NO2", key: "no2", unit: "µg/m³" },
+    { name: "SO2", key: "so2", unit: "µg/m³" },
+    { name: "CO", key: "co", unit: "µg/m³" },
+  ];
+
+  const demoAirComponents = {
+    pm2_5: 12.3,
+    pm10: 45.6,
+    o3: 78.5,
+    no2: 21.4,
+    so2: 8.2,
+    co: 310,
+  };
+
+  const liveComponents =
+    hasLive && weather.air && weather.air.components
+      ? weather.air.components
+      : null;
+
+  const airItems = airComponentMeta.map((c) => ({
+    ...c,
+    value:
+      liveComponents && liveComponents[c.key] != null
+        ? liveComponents[c.key]
+        : demoAirComponents[c.key],
+  }));
+
+  const displayAqi =
+    hasLive && weather.air ? weather.air.aqi : 3;
+
+  const airMeta = {
+    1: {
+      label: "Good",
+      danger: "Low",
+      color: "#22c55e",
+      hint: "Air quality is excellent. Enjoy outdoor activities freely.",
+    },
+    2: {
+      label: "Fair",
+      danger: "Low-Moderate",
+      color: "#84cc16",
+      hint: "Air is acceptable. Sensitive people should watch exposure.",
+    },
+    3: {
+      label: "Moderate",
+      danger: "Elevated",
+      color: "#f59e0b",
+      hint: "Sensitive groups should limit prolonged outdoor exertion.",
+    },
+    4: {
+      label: "Poor",
+      danger: "High",
+      color: "#f97316",
+      hint: "Everyone may notice effects. Avoid heavy outdoor activity.",
+    },
+    5: {
+      label: "Very Poor",
+      danger: "Severe",
+      color: "#dc2626",
+      hint: "Health alert. Stay indoors and keep windows closed.",
+    },
+  }[displayAqi] || {
+    label: "Moderate",
+    danger: "Elevated",
+    color: "#f59e0b",
+    hint: "Sensitive groups should limit prolonged outdoor exertion.",
+  };
+
+  const sunriseTimestamp = hasLive ? weather.city.sunrise : null;
+  const sunsetTimestamp = hasLive ? weather.city.sunset : null;
+
+  const sunriseLabel = sunriseTimestamp
+    ? formatClock(sunriseTimestamp)
+    : "6:08 AM";
+  const sunsetLabel = sunsetTimestamp
+    ? formatClock(sunsetTimestamp)
+    : "6:21 PM";
 
   const lifeTips = {
     sunny: [
@@ -264,10 +577,14 @@ function App() {
     ],
   };
 
-  const currentWeatherTips = lifeTips[weatherType] || lifeTips.sunny;
+  const currentWeatherTips = lifeTips[displayType] || lifeTips.sunny;
 
-  const sunriseMinutes = 6 * 60 + 8;
-  const sunsetMinutes = 18 * 60 + 21;
+  const sunriseMinutes = sunriseTimestamp
+    ? tsToMinutes(sunriseTimestamp)
+    : 6 * 60 + 8;
+  const sunsetMinutes = sunsetTimestamp
+    ? tsToMinutes(sunsetTimestamp)
+    : 18 * 60 + 21;
   const totalDaylight = sunsetMinutes - sunriseMinutes;
 
   const now = new Date();
@@ -383,8 +700,26 @@ function App() {
     },
   ];
 
+  const dailyForecast = hasLive
+    ? weather.daily.map((day) => ({
+        day: day.day,
+        icon: weatherData[day.type] ? weatherData[day.type].icon : "☀️",
+        high: `${day.max}°`,
+        low: `${day.min}°`,
+        condition: day.condition,
+      }))
+    : forecast;
+
+  const hourlyFeed = hasLive
+    ? weather.hourly.map((hour, index) => ({
+        label: index === 0 ? "Now" : formatClock(hour.dt),
+        icon: weatherData[hour.type] ? weatherData[hour.type].icon : "☀️",
+        temp: hour.temp,
+      }))
+    : hourlyForecast;
+
   return (
-    <div className={`app weather-${weatherType}`}>
+    <div className={`app weather-${displayType}`}>
       {/* ================================
           FULL PAGE WEATHER ATMOSPHERE
       ================================= */}
@@ -456,7 +791,7 @@ function App() {
         <div className="header-inner">
           <div className="brand">
             <div className="brand-icon">
-              <CloudSun size={26} />
+              <img src="/logo.svg" alt="Nimbus logo" className="brand-logo" />
             </div>
 
             <div>
@@ -466,16 +801,25 @@ function App() {
           </div>
 
           <div className="search-box">
-            <Search size={20} />
+            <button
+              className="search-button"
+              onClick={runSearch}
+              aria-label="Search city"
+            >
+              <Search size={20} />
+            </button>
 
             <input
               type="text"
               placeholder="Search city..."
               aria-label="Search city"
+              value={cityInput}
+              onChange={(event) => setCityInput(event.target.value)}
+              onKeyDown={handleSearchKeyDown}
             />
           </div>
 
-          <button className="location-button">
+          <button className="location-button" onClick={handleMyLocation}>
             <MapPin size={19} />
             <span>My Location</span>
           </button>
@@ -493,23 +837,57 @@ function App() {
           <div>
             <div className="location-title">
               <MapPin size={21} />
-              <h2>Hyderabad</h2>
+              <h2>{displayCity}</h2>
+
+              <button
+                className={`save-button ${currentSaved ? "save-saved" : ""}`}
+                onClick={saveCurrent}
+                disabled={!hasLive || currentSaved}
+                aria-label={`Save ${displayCity} as favorite`}
+                title={
+                  currentSaved
+                    ? "Location saved"
+                    : "Save this location"
+                }
+              >
+                <Star
+                  size={17}
+                  fill={currentSaved ? "currentColor" : "none"}
+                />
+              </button>
             </div>
 
-            <p>Telangana, India</p>
-            <span className="updated-text">Updated just now</span>
+            <p>{displayRegion}</p>
+            <span className="updated-text">
+              {loading
+                ? "Fetching live weather..."
+                : "Updated just now"}
+            </span>
+
+            {error && <p className="weather-error">{error}</p>}
           </div>
 
-          {/* WEATHER DEMO */}
+          {/* LIVE STATUS */}
 
           <div className="weather-demo">
-            <label htmlFor="weather-select">Weather Demo</label>
+            <label>Conditions</label>
+
+            <div className={`live-status ${loading ? "live-loading" : ""}`}>
+              <span className="live-dot"></span>
+
+              {loading
+                ? "Loading..."
+                : `${displayCondition} · Live`}
+            </div>
 
             <select
-              id="weather-select"
-              value={weatherType}
-              onChange={(event) => setWeatherType(event.target.value)}
+              value={atmosphereOverride}
+              onChange={(event) =>
+                setAtmosphereOverride(event.target.value)
+              }
+              aria-label="Forecast ambience"
             >
+              <option value="auto">Auto</option>
               <option value="sunny">Sunny</option>
               <option value="partly-cloudy">Partly Cloudy</option>
               <option value="cloudy">Cloudy</option>
@@ -520,6 +898,39 @@ function App() {
             </select>
           </div>
         </section>
+
+        {/* SAVED LOCATIONS */}
+
+        {favorites.length > 0 && (
+          <section className="favorites-section">
+            <span className="favorites-label">SAVED PLACES</span>
+
+            <div className="favorites-list">
+              {favorites.map((favorite) => (
+                <div className="favorite-chip" key={favorite._id}>
+                  <button
+                    className="favorite-open"
+                    onClick={() => openFavorite(favorite)}
+                  >
+                    <MapPin size={14} />
+                    <span>
+                      {favorite.name}
+                      {favorite.country ? `, ${favorite.country}` : ""}
+                    </span>
+                  </button>
+
+                  <button
+                    className="favorite-remove"
+                    onClick={() => removeFavorite(favorite._id)}
+                    aria-label={`Remove ${favorite.name}`}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* ================================
             CURRENT WEATHER HERO
@@ -581,22 +992,25 @@ function App() {
           <div className="lightning-layer"></div>
 
           <div className="hero-content">
-            <div className="weather-badge">{currentWeather.badge}</div>
+            <div className="weather-badge">{displayBadge}</div>
 
-            <div className="hero-weather-icon" aria-label={currentWeather.condition}>
-              {currentWeather.icon}
+            <div
+              className="hero-weather-icon"
+              aria-label={displayCondition}
+            >
+              {displayIcon}
             </div>
 
             <div className="hero-main">
-              <div className="hero-temperature">29°</div>
+              <div className="hero-temperature">{displayTemp}</div>
 
               <div className="hero-condition">
-                <h2>{currentWeather.condition}</h2>
-                <p>Feels like 31°</p>
+                <h2>{displayCondition}</h2>
+                <p>Feels like {displayFeels}</p>
               </div>
             </div>
 
-            <p className="weather-summary">{currentWeather.summary}</p>
+            <p className="weather-summary">{displaySummary}</p>
           </div>
 
           {/* WEATHER STATS */}
@@ -609,7 +1023,7 @@ function App() {
 
               <div>
                 <span>Humidity</span>
-                <strong>65%</strong>
+                <strong>{displayHumidity}</strong>
               </div>
             </div>
 
@@ -620,7 +1034,7 @@ function App() {
 
               <div>
                 <span>Wind</span>
-                <strong>12 km/h</strong>
+                <strong>{displayWind}</strong>
               </div>
             </div>
 
@@ -631,7 +1045,7 @@ function App() {
 
               <div>
                 <span>Pressure</span>
-                <strong>1012 hPa</strong>
+                <strong>{displayPressure}</strong>
               </div>
             </div>
 
@@ -642,7 +1056,7 @@ function App() {
 
               <div>
                 <span>Visibility</span>
-                <strong>10 km</strong>
+                <strong>{displayVisibility}</strong>
               </div>
             </div>
           </div>
@@ -660,7 +1074,7 @@ function App() {
 
             <div>
               <span>Sunrise</span>
-              <strong>6:08 AM</strong>
+              <strong>{sunriseLabel}</strong>
             </div>
           </div>
 
@@ -671,7 +1085,7 @@ function App() {
 
             <div>
               <span>Sunset</span>
-              <strong>6:21 PM</strong>
+              <strong>{sunsetLabel}</strong>
             </div>
           </div>
         </section>
@@ -767,13 +1181,77 @@ function App() {
 
                 <p>
                   {percentRemaining}% of daylight is still ahead — from
-                  sunrise at 6:08 AM to sunset at 6:21 PM.
+                  sunrise at {sunriseLabel} to sunset at {sunsetLabel}.
                 </p>
 
                 <div className="daylight-meter">
                   <span style={{ width: `${progress * 100}%` }}></span>
                 </div>
               </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ================================
+            AIR QUALITY & SAFETY
+        ================================= */}
+
+        <section className="air-section">
+          <div className="section-heading">
+            <div>
+              <span>ENVIRONMENT</span>
+              <h2>Air Quality & Safety</h2>
+            </div>
+          </div>
+
+          <div className="air-grid">
+            <div
+              className="air-main-card"
+              style={{ "--air-color": airMeta.color }}
+            >
+              <div className="air-head">
+                <div>
+                  <span className="air-kicker">AIR QUALITY INDEX</span>
+
+                  <div className="air-aqi">
+                    <strong>{displayAqi}</strong>
+                    <span>/ 5</span>
+                  </div>
+                </div>
+
+                <div className="air-badge">
+                  <Activity size={18} />
+                  {airMeta.label}
+                </div>
+              </div>
+
+              <div className="air-meter">
+                <span
+                  style={{
+                    width: `${(displayAqi / 5) * 100}%`,
+                    background: airMeta.color,
+                  }}
+                ></span>
+              </div>
+
+              <div className="air-danger-row">
+                <span>Danger Level</span>
+                <strong style={{ color: airMeta.color }}>
+                  {airMeta.danger}
+                </strong>
+              </div>
+
+              <p className="air-hint">{airMeta.hint}</p>
+            </div>
+
+            <div className="air-components">
+              {airItems.map((item) => (
+                <div className="air-component" key={item.key}>
+                  <span className="air-component-name">{item.name}</span>
+                  <strong>{item.value.toFixed(1)}</strong>
+                  <span className="air-component-unit">{item.unit}</span>
+                </div>
+              ))}
             </div>
           </div>
         </section>
@@ -814,8 +1292,8 @@ function App() {
             }`}
           >
             <iframe
-              title="Hyderabad — live map of the current location"
-              src="https://www.openstreetmap.org/export/embed.html?bbox=78.3514%2C17.3350%2C78.6219%2C17.4199&layer=mapnik&marker=17.3850%2C78.4867"
+              title={`${displayCity} — live map of the current location`}
+              src={mapEmbedSrc}
               loading="lazy"
             ></iframe>
 
@@ -826,7 +1304,7 @@ function App() {
 
               {mapMode === "thermal"
                 ? "Thermal Heat View"
-                : "Hyderabad · Live Map"}
+                : `${displayCity} · Live Map`}
             </div>
           </div>
         </section>
@@ -861,7 +1339,7 @@ function App() {
 
           {forecastMode === "days" && (
             <div className="forecast-grid">
-              {forecast.map((day) => (
+              {dailyForecast.map((day) => (
                 <div className="forecast-card" key={day.day}>
                   <span className="forecast-day">{day.day}</span>
 
@@ -882,7 +1360,7 @@ function App() {
 
           {forecastMode === "hours" && (
             <div className="hourly-pattern-grid">
-              {hourlyForecast.map((hour, index) => (
+              {hourlyFeed.map((hour, index) => (
                 <div className="hourly-pattern-card" key={`${hour.label}-${index}`}>
                   <span className="hourly-pattern-time">{hour.label}</span>
 
