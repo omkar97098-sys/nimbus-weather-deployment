@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 import mongoose from "mongoose";
 import Favorite from "./models/Favorite.js";
+import { mongoRequired } from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FILE_PATH = path.join(__dirname, "data", "favorites.json");
@@ -37,6 +38,10 @@ async function findExisting(name, country, lat, lon) {
     return Favorite.findOne({ name, country, lat, lon }).lean();
   }
 
+  if (mongoRequired) {
+    throw new Error("Database is unavailable (MongoDB not connected).");
+  }
+
   const all = await readFile();
   return (
     all.find(
@@ -52,6 +57,10 @@ async function findExisting(name, country, lat, lon) {
 export async function getFavorites() {
   if (dbActive()) {
     return Favorite.find().sort({ createdAt: -1 }).lean();
+  }
+
+  if (mongoRequired) {
+    throw new Error("Database is unavailable (MongoDB not connected).");
   }
 
   return readFile();
@@ -78,6 +87,10 @@ export async function addFavorite({ name, country = "", lat, lon }) {
     return { favorite: doc.toObject(), duplicate: false };
   }
 
+  if (mongoRequired) {
+    throw new Error("Database is unavailable (MongoDB not connected).");
+  }
+
   const all = await readFile();
   all.unshift(favorite);
   await writeFile(all);
@@ -89,6 +102,10 @@ export async function removeFavorite(id) {
   if (dbActive()) {
     const res = await Favorite.deleteOne({ _id: id });
     return res.deletedCount > 0;
+  }
+
+  if (mongoRequired) {
+    throw new Error("Database is unavailable (MongoDB not connected).");
   }
 
   const all = await readFile();

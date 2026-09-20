@@ -6,7 +6,7 @@ Production architecture:
   - Talks to the backend at `VITE_API_BASE_URL` (fallback: same origin `/api/*`).
 - **Backend** — Node + Express REST API (Render Web Service)
   - Calls OpenWeather, serves `/api/*`, persists favorites.
-- **Database** — MongoDB via `MONGODB_URI` (optional; falls back to a local JSON file).
+- **Database** — MongoDB Atlas via `MONGO_URI`. If `MONGO_URI` is set, MongoDB is **required** (the app retries, then exits if unreachable). If unset, favorites fall back to a local JSON file (local-dev mode only).
 
 ```
 GitHub -> Render Static Site (client/)  ->  VITE_API_BASE_URL
@@ -23,7 +23,7 @@ GitHub -> Render Web Service (server/)  <----/
 | --- | --- | --- | --- |
 | `OPENWEATHER_API_KEY` | Backend only | Yes | OpenWeather Map API key. Never put it in the frontend. |
 | `PORT` | Backend | Render sets it | HTTP port the backend listens on (auto-provided by Render). |
-| `MONGODB_URI` | Backend | No | MongoDB connection string for favorites. If unset, favorites are stored in `server/data/favorites.json` (ephemeral on Render). |
+| `MONGO_URI` | Backend | No* | MongoDB Atlas connection string. If set, MongoDB is required — the app retries 5× (3s apart) then exits if it cannot connect. If unset, favorites use `server/data/favorites.json` (dev mode). `MONGODB_URI` is accepted as a legacy alias. |
 | `CORS_ORIGIN` | Backend | No | Comma-separated list of allowed frontend origins. If unset, all origins are allowed (default). |
 | `VITE_API_BASE_URL` | Frontend (build) | Yes* | Base URL of the deployed backend, e.g. `https://nimbus-api.onrender.com`. *Only needed when the frontend is served from a different origin than the backend. |
 
@@ -39,11 +39,15 @@ they are never committed. See `server/.env.example` and `client/.env.example`.
 5. Start command: `npm start`
 6. Environment variables:
    - `OPENWEATHER_API_KEY` = your OpenWeather key
-   - `MONGODB_URI` = optional Mongo Atlas URI
+   - `MONGO_URI` = Mongo Atlas connection string (required for durable favorites)
    - `CORS_ORIGIN` = e.g. `https://your-nimbus-frontend.onrender.com` (must match the deployed frontend URL)
 
 Render injects `PORT` automatically; the app binds to `0.0.0.0` and serves
-`GET /api/health`, `/api/weather`, `/api/favorites`, `/api/air_pollution`.
+`GET /api/health`, `/api/weather`, `/api/favorites`, plus a 404 handler and an error-handling middleware.
+`GET /api/health` reports `weatherApiKey` (`set`/`missing`), `database` (`connected`/`error`),
+`uptime`, and an `ok` flag. The API key and `MONGO_URI` are validated at startup:
+if `OPENWEATHER_API_KEY` is missing, or `MONGO_URI` is set but unreachable, the app logs a
+clear `FATAL` message and exits with a non-zero code so the Render deploy fails visibly.
 
 ## Render — Frontend (Static Site)
 
@@ -58,12 +62,17 @@ Because the API key lives only in the backend, the frontend bundle never contain
 
 ## Render — Favorites persistence
 
-Without `MONGODB_URI`, the backend stores favorites in `server/data/favorites.json`
-(ephemeral disk on Render — wiped on redeploys/restarts). For durable favorites on Render:
+With `MONGO_URI` set, favorites are stored in MongoDB Atlas (durable across redeploys).
+If `MONGO_URI` is unset, the backend stores favorites in `server/data/favorites.json`
+(local-dev mode; the disk is ephemeral on Render — wiped on redeploys/restarts).
+The fallback is never silent: when `MONGO_URI` is set, the app fails fast if MongoDB is
+unreachable, and favorites requests return an error while the database is disconnected.
 
-1. Create a **MongoDB Atlas** free cluster.
-2. Copy the connection string into the backend `MONGODB_URI` env var.
-3. Redeploy. The server auto-detects Mongo and uses it; the file fallback stays active only if Mongo is unreachable.
+To use MongoDB Atlas:
+
+1. Create a **free Atlas cluster**.
+2. Copy the connection string into the backend `MONGO_URI` env var (never into a committed file).
+3. Redeploy. The server retries the connection at startup and keeps durable favorites in Atlas.
 
 ## Local development
 

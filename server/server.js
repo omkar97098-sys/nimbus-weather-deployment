@@ -1,7 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import { connectDatabase } from "./db.js";
+import { connectDatabase, getDbStatus, mongoRequired } from "./db.js";
 import {
   getFavorites,
   addFavorite,
@@ -22,9 +22,10 @@ const API_KEY = process.env.OPENWEATHER_API_KEY;
 const BASE_URL = "https://api.openweathermap.org/data/2.5";
 
 if (!API_KEY) {
-  console.warn(
-    "OPENWEATHER_API_KEY is not set. Weather calls will fail until you add it to server/.env"
+  console.error(
+    "FATAL: OPENWEATHER_API_KEY is not set. Add it to server/.env (local) or the Render environment variables."
   );
+  process.exit(1);
 }
 
 function iconToType(icon) {
@@ -113,7 +114,15 @@ function aqiInfo(aqi) {
 }
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true });
+  const database = getDbStatus();
+  const weatherApiKey = API_KEY ? "set" : "missing";
+
+  res.json({
+    ok: database === "connected" && weatherApiKey === "set",
+    weatherApiKey,
+    database,
+    uptime: process.uptime(),
+  });
 });
 
 /* ================================
@@ -277,10 +286,33 @@ app.get("/api/weather", async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Weather API server running on port ${PORT}`);
+app.use((_req, res) => {
+  res.status(404).json({ error: "Not found" });
 });
 
-connectDatabase();
+app.use((err, _req, res, _next) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: "Internal server error" });
+});
+
+const PORT = process.env.PORT || 5000;
+
+async function startServer() {
+  const dbUp = await connectDatabase();
+
+  if (!dbUp && mongoRequired) {
+    console.error(
+      "FATAL: MONGO_URI was provided but MongoDB could not be reached. Exiting so the deployment can be fixed."
+    );
+    process.exit(1);
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Weather API server running on port ${PORT}`);
+  });
+}
+
+startServer().catch((err) => {
+  console.error("FATAL: Failed to start server:", err);
+  process.exit(1);
+});
