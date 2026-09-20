@@ -29,6 +29,8 @@ import {
 import { useState, useEffect } from "react";
 import "./App.css";
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+
 function formatClock(timestamp) {
   return new Date(timestamp * 1000).toLocaleTimeString([], {
     hour: "numeric",
@@ -55,7 +57,7 @@ function App() {
 
   const loadWeather = async (params) => {
     const query = new URLSearchParams(params).toString();
-    const response = await fetch(`/api/weather?${query}`);
+    const response = await fetch(`${API_BASE}/api/weather?${query}`);
 
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
@@ -145,7 +147,7 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
-    fetch("/api/favorites")
+    fetch(`${API_BASE}/api/favorites`)
       .then((response) => {
         if (!response.ok) throw new Error("Failed to load favorites");
         return response.json();
@@ -166,7 +168,7 @@ function App() {
     if (!hasLive || currentSaved) return;
 
     try {
-      const response = await fetch("/api/favorites", {
+      const response = await fetch(`${API_BASE}/api/favorites`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -196,7 +198,7 @@ function App() {
 
   const removeFavorite = async (id) => {
     try {
-      await fetch(`/api/favorites/${id}`, { method: "DELETE" });
+      await fetch(`${API_BASE}/api/favorites/${id}`, { method: "DELETE" });
       setFavorites((prev) => prev.filter((f) => f._id !== id));
     } catch {
       setError("Failed to remove favorite");

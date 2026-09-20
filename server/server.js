@@ -9,7 +9,13 @@ import {
 } from "./store.js";
 
 const app = express();
-app.use(cors());
+app.use(
+  cors(
+    process.env.CORS_ORIGIN
+      ? { origin: process.env.CORS_ORIGIN.split(/[,\s]+/) }
+      : {}
+  )
+);
 app.use(express.json());
 
 const API_KEY = process.env.OPENWEATHER_API_KEY;
@@ -273,8 +279,8 @@ app.get("/api/weather", async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Weather API server running on http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Weather API server running on port ${PORT}`);
 });
 
 connectDatabase();
